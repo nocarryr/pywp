@@ -185,7 +185,7 @@ class ItemList(ItemContainer):
 
     def __iter__(self):
         for ix in self.item_indices:
-            yield self[ix]
+            yield self.items_by_id[ix]
 
 @dataclass
 class ItemDict(ItemContainer):
