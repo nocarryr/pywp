@@ -255,12 +255,13 @@ class Post(HasLinks):
     link: str
     title: str
     author: int
+    acf: tp.List[tp.Any]
     taxonomy_names: tp.List[str]
     taxonomy_rels: tp.Dict[str, PostTaxonomyRel]
 
     @classmethod
     def create(cls, data: tp.Dict[str, tp.Any]) -> 'Post':
-        keys = ['id', 'slug', 'type', 'link', 'title', 'author', '_links']
+        keys = ['id', 'slug', 'type', 'link', 'title', 'author', 'acf', '_links']
         kw = {key:data[key] for key in keys}
         kw['pub_date'] = parse_wp_dt(data['date_gmt'])
         kw['last_modified'] = parse_wp_dt(data['modified_gmt'])
