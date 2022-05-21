@@ -125,16 +125,48 @@ class Client:
         for page in self.get_paginated(path, order_by, per_page, **kwargs):
             yield from page
 
-    def get_taxonomies(self) -> api.Taxonomies:
-        data = self.get('taxonomies')
+    def get_taxonomies(self, **kwargs) -> api.Taxonomies:
+        data = self.get('taxonomies', **kwargs)
         return api.Taxonomies.create(data.values())
 
-    def get_taxonomy(self, name: str) -> api.Taxonomy:
-        data = self.get(f'taxonomies/{name}')
+    def get_taxonomies_data(self, **kwargs) -> tp.Iterator[AnyDict]:
+        yield from self.get_paginated_flat('taxonomies', **kwargs)
+
+    def get_taxonomy(self, slug: str) -> api.Taxonomy:
+        data = self.get(f'taxonomies/{slug}')
         return api.Taxonomy.create(data)
 
+    def get_taxonomy_data(self, slug: str, **kwargs) -> AnyDict:
+        return self.get(f'taxonomies/{slug}', **kwargs)
+
+    def get_terms(self, rest_base: str, **kwargs) -> api.WpItems:
+        item_list = None
+        for page in self.get_paginated(rest_base, **kwargs):
+            if item_list is None:
+                item_list = api.WpItems.create(page)
+            else:
+                item_list.extend(page)
+        return item_list
+
+    def get_terms_data(self, rest_base: str, **kwargs) -> tp.Iterator[AnyDict]:
+        yield from self.get_paginated_flat(rest_base, **kwargs)
+
+    def get_posts_data(
+        self, post_type: str = 'posts',
+        order_by: str|None = None, per_page: int = 10, **kwargs
+    ) -> tp.Iterator[AnyDict]:
+
+        yield from self.get_paginated_flat(post_type, order_by, per_page, **kwargs)
+
+    def get_term(self, rest_base: str, term_id: int) -> api.WpItem:
+        data = self.get(f'{rest_base}/{term_id}')
+        return api.WpItem.create(data)
+
+    def get_term_data(self, rest_base: str, term_id: int, **kwargs) -> AnyDict:
+        return self.get(f'{rest_base}/{term_id}', **kwargs)
+
     def get_posts(
-        self, post_type: str = 'post',
+        self, post_type: str = 'posts',
         order_by: str|None = None, per_page: int = 10, **kwargs
     ) -> api.PostList:
 
@@ -145,3 +177,10 @@ class Client:
             else:
                 post_list.extend(page)
         return post_list
+
+    def get_posts_data(
+        self, post_type: str = 'posts',
+        order_by: str|None = None, per_page: int = 10, **kwargs
+    ) -> tp.Iterator[AnyDict]:
+
+        yield from self.get_paginated_flat(post_type, order_by, per_page, **kwargs)
