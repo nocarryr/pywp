@@ -40,8 +40,12 @@ class Status(EnumMixin, enum.Enum):
     draft = enum.auto()
     pending = enum.auto()
     private = enum.auto()
+    inherit = enum.auto()
 
 
+class MediaType(EnumMixin, enum.Enum):
+    image = enum.auto()
+    file = enum.auto()
 
 
 
@@ -95,12 +99,12 @@ class JsonBase:
 class HasLinks(JsonBase):
     # links = Links
     _links: HrefMap
-    # @classmethod
-    # def create(cls, data: tp.Dict[str, tp.Any]) -> 'HasLinks':
-    #     if 'links' not in data:
-    #         links = data.pop('_links', {})
-    #         data['links'] = Links(links)
-    #     return super().create(data)
+    _embedded: tp.Dict[str, tp.Any]
+
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any]) -> 'HasLinks':
+        data.setdefault('_embedded', {})
+        return super().create(data)
 
 @dataclass
 class WpItem(HasLinks):
@@ -263,30 +267,66 @@ class PostTaxonomyRel(JsonBase):
 
 
 @dataclass
-class Post(HasLinks):
-    id: int
+class HasDates:
     pub_date: datetime.datetime
     last_modified: datetime.datetime
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any]) -> 'HasDates':
+        keys = ['date_gmt', 'modified_gmt']
+        attrs = ['pub_date', 'last_modified']
+        for key, attr in zip(keys, attrs):
+            dt = parse_wp_dt(data.pop(key))
+            data[attr] = dt
+        return super().create(data)
+
+    @classmethod
+    def _deserialize(cls, data, decoder) -> 'Post':
+        for key in ['pub_date', 'last_modified']:
+            dt = data[key]
+            if not isinstance(dt, datetime.datetime):
+                data[key] = decoder.decode(dt)
+        return super()._deserialize(data, decoder)
+
+@dataclass
+class PublishItemBase(HasDates, HasLinks):
+    id: int
     slug: str
     status: Status
     type: str
     link: str
     title: str
-    author: int
+    author_id: int
     acf: tp.List[tp.Any]
+
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any]) -> 'PublishItemBase':
+        title = data['title']
+        if isinstance(title, dict):
+            title = title['rendered']
+            data['title'] = title
+        data['author_id'] = data.pop('author')
+        data['status'] = Status.create(data['status'])
+        return super().create(data)
+
+    @classmethod
+    def _deserialize(cls, data, decoder) -> 'Post':
+        data['status'] = decoder.decode(data['status'])
+        return super()._deserialize(data, decoder)
+
+    def get_author(self) -> 'Author':
+        data = self._embedded['author'][0]
+        return Author.create(data)
+
+@dataclass
+class Post(PublishItemBase):
     taxonomy_names: tp.List[str]
     taxonomy_rels: tp.Dict[str, PostTaxonomyRel]
 
     @classmethod
     def create(cls, data: tp.Dict[str, tp.Any]) -> 'Post':
-        keys = ['id', 'slug', 'type', 'link', 'title', 'author', 'acf', '_links']
-        kw = {key:data[key] for key in keys}
-        kw['pub_date'] = parse_wp_dt(data['date_gmt'])
-        kw['last_modified'] = parse_wp_dt(data['modified_gmt'])
-        kw['status'] = Status.create(data['status'])
-        kw['taxonomy_names'] = list(cls.get_taxonomy_names(data))
-        kw['taxonomy_rels'] = {t:[] for t in kw['taxonomy_names']}
-        return super().create(kw)
+        data['taxonomy_names'] = list(cls.get_taxonomy_names(data))
+        data['taxonomy_rels'] = {t:[] for t in data['taxonomy_names']}
+        return super().create(data)
 
     @classmethod
     def get_taxonomy_names(cls, data: tp.Dict[str, tp.Any]) -> tp.Iterable[PostTaxonomyRel]:
@@ -299,14 +339,9 @@ class Post(HasLinks):
 
     @classmethod
     def _deserialize(cls, data, decoder) -> 'Post':
-        data['status'] = decoder.decode(data['status'])
-        for key in ['pub_date', 'last_modified']:
-            dt = decoder.decode(data[key])
-            data[key] = dt
         rels = decoder.decode(data['taxonomy_rels'])
         data['taxonomy_rels'] = rels
         return super()._deserialize(data, decoder)
-
 
     def check_taxonomy_rels(self, client):
         for taxonomy in self.taxonomy_names:
@@ -337,6 +372,98 @@ class PostList(ItemList):
         for item in self:
             item.check_taxonomy_rels(client)
 
+@dataclass
+class Author(HasLinks):
+    id: int
+    name: str
+    url: str
+    description: str
+    link: str
+    slug: str
+    acf: tp.List[tp.Any]
+
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any]) -> 'Author':
+        data.setdefault('_embedded', {})
+        attrs = [field.name for field in dataclasses.fields(cls)]
+        d = {attr:data[attr] for attr in attrs}
+        return super().create(d)
+
+
+@dataclass
+class ImageFile(JsonBase):
+    size_name: str
+    width: int
+    height: int
+    file: str
+    mime_type: str
+    source_url: str
+
+
+@dataclass
+class MediaDetails(JsonBase):
+    original: ImageFile
+    sizes: tp.Dict[str, ImageFile]
+
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any], source_url: str, mime_type: str) -> 'MediaDetails':
+        original_kw = {key:data[key] for key in ['width', 'height', 'file']}
+        original_kw.update({
+            'size_name':'original', 'source_url':source_url, 'mime_type':mime_type,
+        })
+        kwargs = {
+            'original':ImageFile.create(original_kw),
+            'sizes':{},
+        }
+
+        for key, d in data['sizes'].items():
+            img_kw = d.copy()
+            img_kw['size_name'] = key
+            kwargs['sizes'][key] = ImageFile.create(img_kw)
+
+        return cls(**kwargs)
+
+    @classmethod
+    def _deserialize(cls, data, decoder) -> 'MediaDetails':
+        orig = data['original']
+        if not isinstance(orig, ImageFile):
+            data['original'] = decoder.decode(orig)
+        sizes = {}
+        for key, val in data['sizes'].items():
+            if not isinstance(val, ImageFile):
+                val = decoder.decode(val)
+            sizes[key] = val
+        data['sizes'] = sizes
+        return super()._deserialize(data, decoder)
+
+
+@dataclass
+class Media(PublishItemBase):
+    media_type: MediaType
+    mime_type: str
+    media_details: MediaDetails
+    source_url: str
+
+    @classmethod
+    def create(cls, data: tp.Dict[str, tp.Any]) -> 'Media':
+        data['media_type'] = MediaType.create(data['media_type'])
+        details = MediaDetails.create(
+            data['media_details'], data['source_url'], data['mime_type'],
+        )
+        data['media_details'] = details
+        return super().create(data)
+
+    @classmethod
+    def _deserialize(cls, data, decoder) -> 'Media':
+        mt = data['media_type']
+        if not isinstance(mt, MediaType):
+            data['media_type'] = decoder.decode(mt)
+        details = data['media_details']
+        if not isinstance(details, MediaDetails):
+            data['media_details'] = decoder.decoder(details)
+        return super()._deserialize(data, decoder)
+
+
 
 @jsonfactory.register
 class JsonHandler:
@@ -346,7 +473,7 @@ class JsonHandler:
             cls = cls.__class__
         return '.'.join([cls.__module__, cls.__qualname__])
     def iter_handled_classes(self):
-        yield from [Status, datetime.datetime]
+        yield from [Status, MediaType, datetime.datetime]
         yield from JsonBase._iter_subclasses()
     def str_to_cls(self, s):
         for cls in self.iter_handled_classes():

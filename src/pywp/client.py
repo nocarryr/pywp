@@ -170,6 +170,9 @@ class Client:
         order_by: str|None = None, per_page: int = 10, **kwargs
     ) -> api.PostList:
 
+        params = kwargs.setdefault('params', {})
+        params.setdefault('_embed', 'author')
+
         post_list = None
         for page in self.get_paginated(post_type, order_by, per_page, **kwargs):
             if post_list is None:
@@ -184,3 +187,30 @@ class Client:
     ) -> tp.Iterator[AnyDict]:
 
         yield from self.get_paginated_flat(post_type, order_by, per_page, **kwargs)
+
+    def get_post(
+        self, post_id: int, post_type: str = 'posts', **kwargs
+    ) -> api.Post:
+
+        params = kwargs.setdefault('params', {})
+        params.setdefault('_embed', 'author')
+
+        data = self.get(f'{post_type}/{post_id}', **kwargs)
+        return api.Post.create(data)
+
+    def get_post_data(
+        self, post_id: int, post_type: str = 'posts', **kwargs
+    ) -> AnyDict:
+
+        params = kwargs.setdefault('params', {})
+        params.setdefault('_embed', 'author')
+
+        return self.get(f'{post_type}/{post_id}', **kwargs)
+
+    def get_media(self, media_id: int, **kwargs) -> api.Media:
+
+        params = kwargs.setdefault('params', {})
+        params.setdefault('_embed', 'author')
+
+        data = self.get(f'media/{media_id}', **kwargs)
+        return api.Media.create(data)
