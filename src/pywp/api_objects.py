@@ -51,7 +51,14 @@ class JsonBase:
     _child_object_attrs: tp.ClassVar[tp.List[str]] = []
     @classmethod
     def create(cls, data: tp.Dict[str, tp.Any]) -> 'JsonBase':
+        data = cls._filter_unused_data(data)
         return cls(**data)
+
+    @classmethod
+    def load_from_json(cls, filename: str|Path) -> JsonBase:
+        if not isinstance(filename, Path):
+            filename = Path(filename)
+        return jsonfactory.loads(filename.read_text())
 
     @classmethod
     def _deserialize(cls, data, decoder) -> 'JsonBase':
@@ -67,10 +74,14 @@ class JsonBase:
         for subcls in cls.__subclasses__():
             yield from subcls._iter_subclasses()
 
+    @classmethod
+    def _filter_unused_data(cls, data: tp.Dict[str, tp.Any]) -> tp.Dict[str, tp.Any]:
+        field_names = [field.name for field in dataclasses.fields(cls)]
+        return {key:data[key] for key in field_names}
+
     def _serialize(self) -> tp.Dict[tp.Any, tp.Any]:
-        d = dataclasses.asdict(self)
-        # d['_child_object_attrs'] = self._child_object_attrs.copy()
-        return d
+        attrs = [field.name for field in dataclasses.fields(self)]
+        return {attr:getattr(self, attr) for attr in attrs}
 
     def to_json(self, **kwargs):
         return jsonfactory.dumps(self, **kwargs)
@@ -137,7 +148,11 @@ class ItemContainer(JsonBase):
         by_id = data['items_by_id']
         data['items_by_id'] = {}
         for key, val in by_id.items():
-            obj = decoder.decoder(val)
+            if isinstance(val, JsonBase):
+                obj = val
+            else:
+                obj = decoder.decode(val)
+            assert isinstance(obj, JsonBase)
             data['items_by_id'][key] = obj
         return super()._deserialize(data, decoder)
 
@@ -330,11 +345,11 @@ class JsonHandler:
         if type(cls) is not type:
             cls = cls.__class__
         return '.'.join([cls.__module__, cls.__qualname__])
+    def iter_handled_classes(self):
+        yield from [Status, datetime.datetime]
+        yield from JsonBase._iter_subclasses()
     def str_to_cls(self, s):
-        cls = Status
-        if self.cls_to_str(cls) == s:
-            return cls
-        for cls in JsonBase._iter_subclasses():
+        for cls in self.iter_handled_classes():
             if self.cls_to_str(cls) == s:
                 return cls
     def encode(self, o):
@@ -342,7 +357,7 @@ class JsonHandler:
             d = o._serialize()
             d['__class__'] = self.cls_to_str(o)
             return d
-        elif isinstance(o, Status):
+        elif isinstance(o, EnumMixin):
             d = {
                 '__class__':self.cls_to_str(o),
                 'name':o.name, 'value':o.value,
@@ -358,13 +373,13 @@ class JsonHandler:
             return d
     def decode(self, d):
         if '__class__' in d:
-            if cls == 'datetime.datetime':
-                dt = datetime.datetime.strptime(d['value'], self.dt_fmt)
-                dt = datetime.datetime.replace(dt, tzinfo=UTC)
-                return dt
             cls = self.str_to_cls(d['__class__'])
             if cls is not None:
-                if cls is Status:
-                    return Status.create(d['name'])
+                if cls is datetime.datetime:
+                    dt = datetime.datetime.strptime(d['value'], self.dt_fmt)
+                    dt = datetime.datetime.replace(dt, tzinfo=UTC)
+                    return dt
+                elif issubclass(cls, EnumMixin):
+                    return cls.create(d['name'])
                 return cls._deserialize(d, self)
         return d
