@@ -26,18 +26,21 @@ def parse_wp_dt(dt_str: str) -> datetime.datetime:
     dt = datetime.datetime.strptime(dt_str, dt_fmt)
     return datetime.datetime.replace(dt, tzinfo=UTC)
 
-class Status(enum.Enum):
+class EnumMixin:
+
+    @classmethod
+    def create(cls, value: str):
+        if isinstance(value, str):
+            value = getattr(cls, value.lower())
+        return value
+
+class Status(EnumMixin, enum.Enum):
     publish = enum.auto()
     future = enum.auto()
     draft = enum.auto()
     pending = enum.auto()
     private = enum.auto()
 
-    @classmethod
-    def create(cls, value: str|'Status') -> 'Status':
-        if isinstance(value, str):
-            value = getattr(cls, value.lower())
-        return value
 
 
 
