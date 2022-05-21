@@ -91,7 +91,7 @@ class Client:
 
     def get_paginated(
         self, path, order_by: str|None = None, per_page: int = 10, **kwargs
-    ) -> tp.Iterable[AnyDict]:
+    ) -> tp.Iterator[tp.List[AnyDict]]:
 
         req_kw = kwargs.copy()
         params = req_kw.setdefault('params', {})
@@ -113,12 +113,17 @@ class Client:
             # print(f'page: {params["page"]}')
             data, r = self.get(path, return_response=True, **req_kw)
             yield data
-            total_objs = int(r.headers['X-WP-Total'])
-            total_pages = int(r.headers['X-WP-TotalPages'])
+            total_objs = int(r.headers.get('X-WP-Total', -1))
+            total_pages = int(r.headers.get('X-WP-TotalPages', 1))
             has_more = params['page'] < total_pages
             print(f'page={params["page"]}, {has_more=}, {total_objs=}, {total_pages=}')
             params['page'] += 1
 
+    def get_paginated_flat(
+        self, path, order_by: str|None = None, per_page: int = 10, **kwargs
+    ) -> tp.Iterator[AnyDict]:
+        for page in self.get_paginated(path, order_by, per_page, **kwargs):
+            yield from page
 
     def get_taxonomies(self) -> api.Taxonomies:
         data = self.get('taxonomies')
